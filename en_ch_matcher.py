@@ -5,6 +5,8 @@ from transformers import AutoTokenizer, AutoModel
 from sklearn.metrics.pairwise import cosine_similarity
 
 max_len = 30
+critical_value = 0.9
+
 
 # 初始化模型和分词器
 model_name = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
@@ -54,7 +56,7 @@ def cn_split_text(para, max_len=20):
     para = re.sub('([。！？\?][”’])([^，。！？\?])', r'\1\n\2', para)
     # 如果双引号前有终止符，那么双引号才是句子的终点，把分句符\n放到双引号后，注意前面的几句都小心保留了双引号
     para = para.rstrip()  # 段尾如果有多余的\n就去掉它
-    # 很多规则中会考虑分号;，但是这里我把它忽略不计，破折号、英文双引号等同样忽略，需要的再做些简单调整即可。
+    # 很多规则中会考虑分号，但是这里我把它忽略不计，破折号、英文双引号等同样忽略，需要的再做些简单调整即可。
     
     sentences = [item for item in para.split("\n") if item != '']
 
@@ -98,45 +100,95 @@ def get_sentence_embeddings(sentences):
 
 
 
+def get_queue():
+    res_list = [[] for _ in range(5000)]
+    idx = 0
+
+    for i in range(1, 100):
+        for j in range(i, 0, -1):
+            res_list[idx] = (i, j)
+            idx += 1
+
+    return res_list
+
+
+
 
 def match_sentences(english_text, chinese_text, window_size=3):
     """
     动态调整搜索范围以提高匹配准确度。
     """
-    english_sentences = cn_split_text(english_text)
-    chinese_sentences = en_split_text(chinese_text)
+    english_sentences = en_split_text(english_text)
+    chinese_sentences = cn_split_text(chinese_text)
 
     english_embeddings = get_sentence_embeddings(english_sentences)
     chinese_embeddings = get_sentence_embeddings(chinese_sentences)
 
     matches = []
-    last_matched_chi_index = -1  # 记录上一次匹配的中文句子索引
+    last_matched_cn_index = -1  # 记录上一次匹配的中文句子索引
+    last_matched_en_index = -1
 
-    for i, eng_emb in enumerate(english_embeddings):
-        max_similarity = 0
-        best_match = None
-        # 动态调整搜索起始点，基于上一次匹配的中文句子索引
-        start_index = max(0, last_matched_chi_index + 1)
-        for j in range(start_index, len(chinese_sentences)):
-            chi_emb = chinese_embeddings[j]
-            similarity = cosine_similarity([eng_emb], [chi_emb])[0][0]
-            if similarity > max_similarity:
-                max_similarity = similarity
-                best_match = (i, j, english_sentences[i], chinese_sentences[j], similarity)
-            # 当搜索到足够远离上次匹配位置时，停止搜索以避免过大的错位
-            if j >= start_index + window_size:
+
+    queue = get_queue(len(english_sentences), len(chinese_sentences))
+
+    for idx_en in range(len(english_sentences)):
+        if idx_en < last_matched_en_index:
+            continue
+
+        out_of_range = False
+        for d_en, d_cn in queue:
+            try:
+                en_emb = english_embeddings[last_matched_cn_index + d_en]
+                cn_emb = chinese_embeddings[last_matched_cn_index + d_cn]
+                similarity = cosine_similarity([en_emb], [cn_emb])[0][0]
+                if similarity > critical_value:
+                    last_matched_en_index += d_en
+                    last_matched_cn_index += d_cn
+                    matches.append((last_matched_en_index, last_matched_cn_index, en_emb, cn_emb, similarity))
+                    break
+            
+            except:
+                out_of_range = True
+                print(f'{last_matched_cn_index}, {last_matched_en_index}, d_en:{d_en}, d_cn:{d_cn}')
                 break
         
-        if best_match:
-            matches.append(best_match)
-            last_matched_chi_index = best_match[1]  # 更新上一次匹配的中文句子索引
+        if out_of_range:
+            break
 
-    # 保存结果
-    with open("dynamic_flexible_matched_pairs.txt", "w", encoding="utf-8") as f:
-        for match in matches:
-            f.write(f"Index English: {match[0]}, Index Chinese: {match[1]}\nEnglish Sentence: {match[2]}\nChinese Sentence: {match[3]}\nSimilarity: {match[4]:.4f}\n\n")
+        
 
-    print(f"Processed {len(matches)} dynamically flexible matched sentence pairs.")
+
+
+
+
+            
+
+
+    # for i, eng_emb in enumerate(english_embeddings):
+    #     max_similarity = 0
+    #     best_match = None
+    #     # 动态调整搜索起始点，基于上一次匹配的中文句子索引
+    #     start_index = max(0, last_matched_chi_index + 1)
+    #     for j in range(start_index, len(chinese_sentences)):
+    #         chi_emb = chinese_embeddings[j]
+    #         similarity = cosine_similarity([eng_emb], [chi_emb])[0][0]
+    #         if similarity > max_similarity:
+    #             max_similarity = similarity
+    #             best_match = (i, j, english_sentences[i], chinese_sentences[j], similarity)
+    #         # 当搜索到足够远离上次匹配位置时，停止搜索以避免过大的错位
+    #         if j >= start_index + window_size:
+    #             break
+        
+    #     if best_match:
+    #         matches.append(best_match)
+    #         last_matched_chi_index = best_match[1]  # 更新上一次匹配的中文句子索引
+
+    # # 保存结果
+    # with open("dynamic_flexible_matched_pairs.txt", "w", encoding="utf-8") as f:
+    #     for match in matches:
+    #         f.write(f"Index English: {match[0]}, Index Chinese: {match[1]}\nEnglish Sentence: {match[2]}\nChinese Sentence: {match[3]}\nSimilarity: {match[4]:.4f}\n\n")
+
+    # print(f"Processed {len(matches)} dynamically flexible matched sentence pairs.")
 
 
 
