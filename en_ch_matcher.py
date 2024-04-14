@@ -1,107 +1,77 @@
-import torch
+# import torch
 import re
+import os
+import time
 import numpy as np
+# import tensorflow as tf
 from transformers import AutoTokenizer, AutoModel
-from sklearn.metrics.pairwise import cosine_similarity
+from sentence_transformers import SentenceTransformer
+# from sklearn.metrics.pairwise import cosine_similarity
+from tqdm import tqdm
+import pickle
 
-max_len = 30
-critical_value = 0.9
+max_len = 100
+critical_value = 0.35
 
+en_file_name = 'en_book.txt'
+cn_file_name = 'cn_book.txt'
+
+start_time = time.perf_counter()
 
 # 初始化模型和分词器
-model_name = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
-tokenizer = AutoTokenizer.from_pretrained(model_name)
-model = AutoModel.from_pretrained(model_name)
+model_path = "./model/m2.pkl"
+
+if os.path.exists(model_path):
+    with open(model_path, 'rb') as f:
+        model = pickle.load(f)
+else:
+    model = SentenceTransformer('distiluse-base-multilingual-cased-v2')
+    with open(model_path, 'wb') as f:
+        pickle.dump(model, f)
 
 
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-print(f"Using device: {device}")
+
+# device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+# print(f"运算设备: {device}")
 
 
-def en_split_text(para, max_len=20):
-    # 使用正则表达式进行分句，同时处理英文和中文的标点
-    pattern = r'(?<!\w\.\w.)(?<![A-Z][a-z]\.)(?<=\.|\?|!|。|？|！|,)\s'
-    sentences = re.split(pattern, para)
-    refined_sentences = []
-
-    for sentence in sentences:
-        # 检查句子长度
-        if len(sentence) <= max_len:
-            refined_sentences.append(sentence)
-            continue
-
-        # 对于超长句子，尝试根据逗号进一步拆分（同时考虑英文和中文的逗号）
-        chunks = re.split('，|,|、', sentence)
-        temp_chunk = []
-        for chunk in chunks:
-            if len(','.join(temp_chunk + [chunk])) > max_len and temp_chunk:
-                refined_sentences.append(','.join(temp_chunk).strip())
-                temp_chunk = [chunk]
-            else:
-                temp_chunk.append(chunk)
-        # 添加最后一部分
-        if temp_chunk:
-            refined_sentences.append(','.join(temp_chunk).strip())
-
-    return refined_sentences
+def en_split_text(para, max_len=100):
+    para = re.sub('(\.{6})([^”’\'\"]) ?', r"\1\n\2", para)  # 英文省略号
+    para = re.sub('(\…{2})([^”’\'\"]) ?', r"\1\n\2", para)  # 中文省略号
+    para = re.sub('(?<!\b(?:Mr|Dr|Ms)\.)\.(?=\s+[A-Z]|$)', '.\n', para)
+    para = re.sub('([。！？；;\?\!]+ ?[”’]? ?)([^，。！？\?\!”’\'\"])', r'\1\n\2', para)
+    para = re.sub('([^。！？；;\?\!]+ ?[”’]? ?)(”’\'\")', r'\1\n', para)
+    sentences = [item for item in re.split('\n ?', para) if item != '']
+    return sentences
 
 
 
 
 
 def cn_split_text(para, max_len=20):
-    para = re.sub('([。！？\?；])([^”’])', r"\1\n\2", para)  # 单字符断句符
-    para = re.sub('(\.{6})([^”’])', r"\1\n\2", para)  # 英文省略号
-    para = re.sub('(\…{2})([^”’])', r"\1\n\2", para)  # 中文省略号
-    para = re.sub('([。！？\?][”’])([^，。！？\?])', r'\1\n\2', para)
-    # 如果双引号前有终止符，那么双引号才是句子的终点，把分句符\n放到双引号后，注意前面的几句都小心保留了双引号
-    para = para.rstrip()  # 段尾如果有多余的\n就去掉它
-    # 很多规则中会考虑分号，但是这里我把它忽略不计，破折号、英文双引号等同样忽略，需要的再做些简单调整即可。
+    para = re.sub('(\.{6})([^”’\'\"]) ?', r"\1\n\2", para)  # 英文省略号
+    para = re.sub('(\…{2})([^”’\'\"]) ?', r"\1\n\2", para)  # 中文省略号
+    para = re.sub('([。！？\?\!]+ ?[”’]? ?)([^，。！？\?\!”’\'\"])', r'\1\n\2', para)
+    para = re.sub('([^。！？\?\!]+ ?[”’]? ?)(”’\'\")', r'\1\n', para)
+    para = para.strip()  #去除首尾空格
     
-    sentences = [item for item in para.split("\n") if item != '']
+    sentences = [item for item in re.split('\n', para) if item != '']
 
-
-    refined_sentences = []
-
-    for sentence in sentences:
-        # 检查句子长度
-        if len(sentence) <= max_len:
-            refined_sentences.append(sentence)
-            continue
-
-        # 对于超长句子，尝试根据逗号进一步拆分（同时考虑英文和中文的逗号）
-        chunks = re.split('，|,|、', sentence)
-        temp_chunk = []
-        for chunk in chunks:
-            if len(','.join(temp_chunk + [chunk])) > max_len and temp_chunk:
-                refined_sentences.append(','.join(temp_chunk).strip())
-                temp_chunk = [chunk]
-            else:
-                temp_chunk.append(chunk)
-        # 添加最后一部分
-        if temp_chunk:
-            refined_sentences.append(','.join(temp_chunk).strip())
-
-    return refined_sentences
+    return sentences
 
 
 
 
 def get_sentence_embeddings(sentences):
     """
-    批量计算句子的嵌入向量，并使用GPU加速（如果可用）。
+    计算句子的嵌入向量
     """
-    inputs = tokenizer(sentences, return_tensors="pt", padding=True, truncation=True, max_length=128, return_token_type_ids=False, return_attention_mask=True).to(device)
-    with torch.no_grad():  # 不计算梯度，减少内存/显存占用
-        outputs = model(**inputs)
-    embeddings = outputs.last_hidden_state.mean(dim=1).cpu().numpy()  # 将嵌入向量移回CPU
-    return embeddings
-
+    return model.encode(sentences)
 
 
 
 def get_queue():
-    res_list = [[] for _ in range(5000)]
+    res_list = [[] for _ in range(4950)]
     idx = 0
 
     for i in range(1, 100):
@@ -114,81 +84,103 @@ def get_queue():
 
 
 
+def position_similarity(pos1, pos2, sigma=0.1):
+    """
+    根据两个句子在各自文本中的相对位置计算距离相似度。
+    :param pos1: 第一个句子的相对位置（0到1之间的小数）
+    :param pos2: 第二个句子的相对位置（0到1之间的小数）
+    :param sigma: 高斯函数的标准差，控制相似度随距离变化的速度
+    :return: 距离的相似度
+    """
+    relative_distance = abs(pos1 - pos2)
+    return np.exp(-relative_distance**2 / (2 * sigma**2))
+
+
+
+
+
 def match_sentences(english_text, chinese_text, window_size=3):
     """
     动态调整搜索范围以提高匹配准确度。
     """
-    english_sentences = en_split_text(english_text)
-    chinese_sentences = cn_split_text(chinese_text)
+    en_sentences = en_split_text(english_text)
+    cn_sentences = cn_split_text(chinese_text)
 
-    english_embeddings = get_sentence_embeddings(english_sentences)
-    chinese_embeddings = get_sentence_embeddings(chinese_sentences)
+    if input("从本地读取？（N/Y) >>>") in ['n', 'N']:
+        en_embeddings = [get_sentence_embeddings([sentence])[0] for sentence in tqdm(en_sentences, desc="正在处理英文句子")]
+        cn_embeddings = [get_sentence_embeddings([sentence])[0] for sentence in tqdm(cn_sentences, desc="正在处理中文句子")]
+        en_embeddings = np.array(en_embeddings)
+        cn_embeddings = np.array(cn_embeddings)
 
+        np.savetxt('en_embeddings.txt', en_embeddings)
+        np.savetxt('cn_embeddings.txt', cn_embeddings)
+
+    # 从文件中读取数组数据
+    en_embeddings = np.loadtxt('en_embeddings.txt')
+    cn_embeddings = np.loadtxt('cn_embeddings.txt')
+
+
+    similaritys = en_embeddings @ cn_embeddings.T
     matches = []
-    last_matched_cn_index = -1  # 记录上一次匹配的中文句子索引
-    last_matched_en_index = -1
+    last_cn_index = -1  # 记录上一次匹配的中文句子索引
+    last_en_index = -1
 
 
-    queue = get_queue(len(english_sentences), len(chinese_sentences))
-
-    for idx_en in range(len(english_sentences)):
-        if idx_en < last_matched_en_index:
+    queue = get_queue()
+    l2 = [0 for i in range(10)]
+    
+    for idx_en in range(len(en_sentences)):
+        if idx_en < last_en_index:
             continue
 
         out_of_range = False
         for d_en, d_cn in queue:
+            
             try:
-                en_emb = english_embeddings[last_matched_cn_index + d_en]
-                cn_emb = chinese_embeddings[last_matched_cn_index + d_cn]
-                similarity = cosine_similarity([en_emb], [cn_emb])[0][0]
+                en_sentance = en_sentences[last_en_index + d_en]
+                cn_sentence = cn_sentences[last_cn_index + d_cn]
+                similarity = similaritys[last_en_index + d_en][last_cn_index + d_cn]
                 if similarity > critical_value:
-                    last_matched_en_index += d_en
-                    last_matched_cn_index += d_cn
-                    matches.append((last_matched_en_index, last_matched_cn_index, en_emb, cn_emb, similarity))
+                    last_en_index += d_en   
+                    last_cn_index += d_cn
+                    matches.append((last_en_index, last_cn_index, en_sentance, cn_sentence, similarity))
                     break
             
             except:
-                out_of_range = True
-                print(f'{last_matched_cn_index}, {last_matched_en_index}, d_en:{d_en}, d_cn:{d_cn}')
+                # out_of_range = True
+                print(f'error:{last_cn_index}, {last_en_index}, d_en:{d_en}, d_cn:{d_cn}')
                 break
         
         if out_of_range:
             break
 
+    # # 首先，初始化一个与 similarity 同形状的矩阵来存储位置相似度
+    # position_sim_matrix = np.zeros_like(similaritys)
+
+    # # 计算位置相似度矩阵
+    # en_len = len(en_sentences)
+    # cn_len = len(cn_sentences)
+
+    # for i in range(en_len):
+    #     for j in range(cn_len):
+    #         en_pos = i / en_len
+    #         cn_pos = j / cn_len
+    #         position_sim_matrix[i, j] = position_similarity(en_pos, cn_pos)
+
+    # # 计算最终的相似度矩阵
+    # final_sim_matrix = similarity * position_sim_matrix
+
+    # # 为每个源句子找到最佳匹配的翻译句子
+    # matches = []
+    # for en_idx, row in enumerate(final_sim_matrix):
+    #     cn_idx = row.argmax()
+    #     max_value = row.max()
+    #     matches.append((en_idx, cn_idx, en_sentences[en_idx], cn_sentences[cn_idx], max_value))
         
+    # return matches
 
 
-
-
-
-            
-
-
-    # for i, eng_emb in enumerate(english_embeddings):
-    #     max_similarity = 0
-    #     best_match = None
-    #     # 动态调整搜索起始点，基于上一次匹配的中文句子索引
-    #     start_index = max(0, last_matched_chi_index + 1)
-    #     for j in range(start_index, len(chinese_sentences)):
-    #         chi_emb = chinese_embeddings[j]
-    #         similarity = cosine_similarity([eng_emb], [chi_emb])[0][0]
-    #         if similarity > max_similarity:
-    #             max_similarity = similarity
-    #             best_match = (i, j, english_sentences[i], chinese_sentences[j], similarity)
-    #         # 当搜索到足够远离上次匹配位置时，停止搜索以避免过大的错位
-    #         if j >= start_index + window_size:
-    #             break
-        
-    #     if best_match:
-    #         matches.append(best_match)
-    #         last_matched_chi_index = best_match[1]  # 更新上一次匹配的中文句子索引
-
-    # # 保存结果
-    # with open("dynamic_flexible_matched_pairs.txt", "w", encoding="utf-8") as f:
-    #     for match in matches:
-    #         f.write(f"Index English: {match[0]}, Index Chinese: {match[1]}\nEnglish Sentence: {match[2]}\nChinese Sentence: {match[3]}\nSimilarity: {match[4]:.4f}\n\n")
-
-    # print(f"Processed {len(matches)} dynamically flexible matched sentence pairs.")
+    return matches
 
 
 
@@ -203,11 +195,22 @@ with open(en_file_name, 'r', encoding='utf-8') as file:
 with open(cn_file_name, 'r', encoding='utf-8') as file:
     chinese_text = file.read()
 
-# match_sentences(english_text, chinese_text)
 cn = cn_split_text(chinese_text)
-with open('try3.txt', 'w', encoding='utf-8') as file:
+en = en_split_text(english_text)
+with open('try1.txt', 'w', encoding='utf-8') as file:
     for line in cn:
         file.write(line + '\n')
+with open('try2.txt', 'w', encoding='utf-8') as file:
+    for line in en:
+        file.write(line + '\n')
 
-    # with open('try2.txt', 'w', encoding='utf-8') as file:
-    #     file.write(str(english_sentences))
+matches = match_sentences(english_text, chinese_text)
+with open('try3.txt', 'w', encoding='utf-8') as file:
+    for en_index, cn_index, en_sentance, cn_sentance, similarity in matches:
+        file.write(f"{en_index} {cn_index}\n{en_sentance}\n{cn_sentance}\n{similarity}\n\n")
+
+    
+
+end_time = time.perf_counter()
+
+print(f'用时:{end_time - start_time:.2f}秒')
