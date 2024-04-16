@@ -1,17 +1,13 @@
-# import torch
 import re
 import os
 import time
 import numpy as np
-# import tensorflow as tf
-from transformers import AutoTokenizer, AutoModel
 from sentence_transformers import SentenceTransformer
-# from sklearn.metrics.pairwise import cosine_similarity
 from tqdm import tqdm
 import pickle
 
 max_len = 100
-critical_value = 0.35
+critical_value = 0.3
 
 en_file_name = 'en_book.txt'
 cn_file_name = 'cn_book.txt'
@@ -31,8 +27,6 @@ else:
 
 
 
-# device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-# print(f"运算设备: {device}")
 
 
 def en_split_text(para, max_len=100):
@@ -84,6 +78,22 @@ def get_queue():
 
 
 
+def split_to_short(text):
+    sentences = []
+    for para in text:
+        para = re.sub('([,，])', r"\1\n", para)
+        para = para.strip()  #去除首尾空格
+    
+        tmp_sentences = [(item, idx) for item in re.split('\n', para) if item != '']  
+
+    sentences = sentences + tmp_sentences
+
+    return sentences
+
+
+
+
+
 def position_similarity(pos1, pos2, sigma=0.1):
     """
     根据两个句子在各自文本中的相对位置计算距离相似度。
@@ -101,12 +111,12 @@ def position_similarity(pos1, pos2, sigma=0.1):
 
 def match_sentences(english_text, chinese_text, window_size=3):
     """
-    动态调整搜索范围以提高匹配准确度。
+    匹配中英文句子
     """
     en_sentences = en_split_text(english_text)
     cn_sentences = cn_split_text(chinese_text)
 
-    if input("从本地读取？（N/Y) >>>") in ['n', 'N']:
+    if input("从本地读取?(N/Y) >>>") in ['n', 'N']:
         en_embeddings = [get_sentence_embeddings([sentence])[0] for sentence in tqdm(en_sentences, desc="正在处理英文句子")]
         cn_embeddings = [get_sentence_embeddings([sentence])[0] for sentence in tqdm(cn_sentences, desc="正在处理中文句子")]
         en_embeddings = np.array(en_embeddings)
@@ -123,37 +133,40 @@ def match_sentences(english_text, chinese_text, window_size=3):
     similaritys = en_embeddings @ cn_embeddings.T
     matches = []
     last_cn_index = -1  # 记录上一次匹配的中文句子索引
-    last_en_index = -1
-
-
+    last_en_index = -1  # 记录上一次匹配的英文句子索引
     queue = get_queue()
-    l2 = [0 for i in range(10)]
     
+    # 初次匹配
     for idx_en in range(len(en_sentences)):
         if idx_en < last_en_index:
             continue
 
-        out_of_range = False
         for d_en, d_cn in queue:
+            if last_en_index + d_en >= len(en_sentences):
+                continue
+            if last_cn_index + d_cn >= len(cn_sentences):
+                continue
             
-            try:
-                en_sentance = en_sentences[last_en_index + d_en]
-                cn_sentence = cn_sentences[last_cn_index + d_cn]
-                similarity = similaritys[last_en_index + d_en][last_cn_index + d_cn]
-                if similarity > critical_value:
-                    last_en_index += d_en   
-                    last_cn_index += d_cn
-                    matches.append((last_en_index, last_cn_index, en_sentance, cn_sentence, similarity))
-                    break
-            
-            except:
-                # out_of_range = True
-                print(f'error:{last_cn_index}, {last_en_index}, d_en:{d_en}, d_cn:{d_cn}')
+            en_sentance = en_sentences[last_en_index + d_en]
+            cn_sentence = cn_sentences[last_cn_index + d_cn]
+            similarity = similaritys[last_en_index + d_en][last_cn_index + d_cn]
+            if similarity > critical_value:
+                last_en_index += d_en   
+                last_cn_index += d_cn
+                matches.append((last_en_index, last_cn_index, en_sentance, cn_sentence, similarity))
                 break
-        
-        if out_of_range:
-            break
 
+
+    # 二次匹配
+
+    last_benchmark_en_idx = matches[0][last_en_index]
+    last_benchmark_cn_idx = matches[0][last_cn_index]
+    for benchmark_en_idx, benchmark_cn_idx, en_sentance, cn_sentence, similarity in matches[1:]:
+        slice_en_sentances = en_sentance[benchmark_en_idx : last_benchmark_en_idx]
+        slice_cn_sentances = cn_sentence[benchmark_cn_idx : last_benchmark_cn_idx]
+
+        cn_short_sentences = split_to_short(slice_cn_sentances)
+        en_short_sentences = split_to_short([en_sentance])
     # # 首先，初始化一个与 similarity 同形状的矩阵来存储位置相似度
     # position_sim_matrix = np.zeros_like(similaritys)
 
@@ -170,16 +183,14 @@ def match_sentences(english_text, chinese_text, window_size=3):
     # # 计算最终的相似度矩阵
     # final_sim_matrix = similarity * position_sim_matrix
 
-    # # 为每个源句子找到最佳匹配的翻译句子
-    # matches = []
-    # for en_idx, row in enumerate(final_sim_matrix):
-    #     cn_idx = row.argmax()
-    #     max_value = row.max()
-    #     matches.append((en_idx, cn_idx, en_sentences[en_idx], cn_sentences[cn_idx], max_value))
+            
+
+
+        for en_idx, row in enumerate(similaritys):
+            cn_idx = row.argmax()
+            max_value = row.max()
+            matches.append((en_idx, cn_idx, en_sentences[en_idx], cn_sentences[cn_idx], max_value))
         
-    # return matches
-
-
     return matches
 
 
