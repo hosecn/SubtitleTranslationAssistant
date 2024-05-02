@@ -5,8 +5,8 @@ import json
 import os
 import difflib
 
-en_file = 'en_book.txt'
-cn_file = 'cn_book.txt'
+en_file = '1_en.txt'
+cn_file = '1_cn.txt'
 # GET_EMBEDDINGS_FROM_FILE = False
 GET_EMBEDDINGS_FROM_FILE = True
 
@@ -64,7 +64,7 @@ def book_timing(book_file, patch_file):
         book_words = file.readlines()
         book = []
         for word in book_words:
-            book.append({'text' : word.rstrip('\n')})
+            book.append({'text' : word.rstrip('\n'), 'start' : None, 'end' : None})
 
     tmp = 0
     for patch in patch_words:
@@ -79,21 +79,10 @@ def book_timing(book_file, patch_file):
             except:
                 pass
 
-    for idx, book_list in enumerate(book):
-        if 'start' not in book_list:
-            book[idx]['start'] = book[idx-1]['start']
-            book[idx]['end'] = book[idx-1]['end']
-            pass
-
-    for idx, book_list in enumerate(book):
-        if 'start' not in book_list:
-            book[idx]['start'] = book[idx-1]['start']
-            book[idx]['end'] = book[idx-1]['end']
-
+    with open('timing_book.txt', 'w', encoding='utf-8') as file:
+        for line in book:
+            file.write(str(line) + '\n')
     return book
-    # with open('timing_book.txt', 'w', encoding='utf-8') as file:
-    #     for line in book:
-    #         file.write(str(line) + '\n')
             
     
 
@@ -115,11 +104,11 @@ with open(cn_file, 'r', encoding='utf-8') as file:
 
 if GET_EMBEDDINGS_FROM_FILE:
     if not os.path.exists('matches.txt'):
-        matches = en_ch_matcher.match_sentences(english_text, chinese_text)
+        matches = en_ch_matcher.match_sentences(english_text, chinese_text, timing_book)
         #保存文件
         with open('matches.txt', 'w', encoding='utf-8') as file:
-            for en_index, cn_index, en_sentance, cn_sentance, similarity in matches:
-                file.write(f"{en_index} {cn_index}\n{en_sentance}\n{cn_sentance}\n{similarity}\n\n")
+            for en_index, cn_index, en_sentance, cn_sentence, similarity in matches:
+                file.write(f"{en_index} {cn_index}\n{en_sentance}\n{cn_sentence}\n{similarity}\n\n")
 
     #读取文件
     with open('matches.txt', 'r', encoding='utf-8') as file:
@@ -131,6 +120,8 @@ if GET_EMBEDDINGS_FROM_FILE:
             en_idx, cn_idx = int(en_idx), int(cn_idx)
             matches.append((en_idx, cn_idx, lines[idx*5+1], lines[idx*5+2], float(lines[idx*5+3])))
             
+else:
+    matches = en_ch_matcher.match_sentences(english_text, chinese_text, timing_book)
 
 
 
@@ -153,19 +144,26 @@ def get_timing():
             file.write(line + '\n')
 
 
-
+    flag = 0
     for idx, line in enumerate(diff_result):
+        if flag:
+            flag = 0
+            continue
+
         the_word = line[2:]
 
-        if line.startswith('  '):
+        if line.startswith(' '):
             book_words_timing.append((the_word, timing_book[0]['start'], timing_book[0]['end']))
             matches.pop(0)
             timing_book.pop(0)
 
-        elif line.startswith('- '):
+        elif line.startswith('-'):
             try:
-                if diff_result[idx+1].startswith('+ '):
+                if diff_result[idx+1].startswith('+'):
                     book_words_timing.append((the_word, timing_book[1]['start'], timing_book[1]['end']))
+                    matches.pop(0)
+                    timing_book.pop(0)
+                    flag = 1
 
                 else:
                     book_words_timing.append((the_word, None, None))
@@ -176,33 +174,19 @@ def get_timing():
         else:
             book_words_timing.append((the_word, None, None))
 
+    return book_words_timing
+
+
 
             
 
-
-
-
-
-def extract_timestamps(start_idx, end_idx):
-    start_time = timing_book[start_idx]['start']
-    end_time = timing_book[end_idx]['end']
-    return start_time, end_time
-
-
-
-
-
 with open('output.srt', 'w') as f:
-    matches_indices = get_timing()
-    
-    # for i, (match_idx, timing_idx) in enumerate(matches_indices):
-    #     start_idx = timing_idx
-    #     end_idx = timing_idx + len(matches[match_idx][2].split()) - 1
+    matches_list = get_timing()
 
-    #     if end_idx >= len(timing_book):
-    #         continue
+    for i, match in enumerate(matches_list):
+        text = match['text']
+        start_time = match['start']
+        end_time = match['end']
 
-    #     start_time, end_time = extract_timestamps(start_idx, end_idx)
-        
-    #     subtitle = f"{i+1}\n{start_time} --> {end_time}\n{matches[match_idx][3]}\n\n"
-    #     f.write(subtitle)
+        subtitle = f"{i+1}\n{start_time} --> {end_time}\n{text}\n\n"
+        f.write(subtitle)
