@@ -107,8 +107,8 @@ if GET_EMBEDDINGS_FROM_FILE:
         matches = en_ch_matcher.match_sentences(english_text, chinese_text, timing_book)
         #保存文件
         with open('matches.txt', 'w', encoding='utf-8') as file:
-            for en_index, cn_index, en_sentance, cn_sentence, similarity in matches:
-                file.write(f"{en_index} {cn_index}\n{en_sentance}\n{cn_sentence}\n{similarity}\n\n")
+            for en_index, cn_index, en_sentence, cn_sentence, similarity in matches:
+                file.write(f"{en_index} {cn_index}\n{en_sentence}\n{cn_sentence}\n{similarity}\n\n")
 
     #读取文件
     with open('matches.txt', 'r', encoding='utf-8') as file:
@@ -136,7 +136,6 @@ def get_timing():
         for word in word_tokenize(sentence):
             book_words.append(word)
 
-    book_words_timing = []
     book_sentences_timing = []
     diff_result = difflib.ndiff(book_words, timing_words)
     with open('diff.txt', 'w', encoding='utf-8') as file:
@@ -144,37 +143,36 @@ def get_timing():
             file.write(line + '\n')
 
 
-    flag = 0
-    for idx, line in enumerate(diff_result):
-        if flag:
-            flag = 0
-            continue
+    timing_words_idx = 0
+    for _, _, en_sentence, cn_sentence, _ in matches:
+        sentence = ''
+        start = None
+        end = None
 
-        the_word = line[2:]
-
-        if line.startswith(' '):
-            book_words_timing.append((the_word, timing_book[0]['start'], timing_book[0]['end']))
-            matches.pop(0)
-            timing_book.pop(0)
-
-        elif line.startswith('-'):
+        while len(sentence) < len(en_sentence):
             try:
-                if diff_result[idx+1].startswith('+'):
-                    book_words_timing.append((the_word, timing_book[1]['start'], timing_book[1]['end']))
-                    matches.pop(0)
-                    timing_book.pop(0)
-                    flag = 1
-
+                if timing_book[timing_words_idx]['text'] in [',', '.', '!', '?', '?!', '!?', '...', '…', '……', '.', '?"', '."', '"', '!"', '?!"', '!?"', '…"', ';', ':']:
+                    sentence += timing_book[timing_words_idx]['text']
+                    print(sentence)
                 else:
-                    book_words_timing.append((the_word, None, None))
-            
-            except:
-                pass
-        
-        else:
-            book_words_timing.append((the_word, None, None))
+                    sentence += ' ' + timing_book[timing_words_idx]['text']
 
-    return book_words_timing
+                if start == None and timing_book[timing_words_idx]['start'] != None:
+                    start = timing_book[timing_words_idx]['start']
+
+                if timing_book[timing_words_idx]['end'] != None:
+                    end = timing_book[timing_words_idx]['end']
+
+                timing_words_idx += 1
+
+            except:
+                print('Error')
+                break
+
+        book_sentences_timing.append({'text' : cn_sentence, 'start' : start, 'end' : end})
+
+
+    return book_sentences_timing
 
 
 
@@ -188,5 +186,5 @@ with open('output.srt', 'w') as f:
         start_time = match['start']
         end_time = match['end']
 
-        subtitle = f"{i+1}\n{start_time} --> {end_time}\n{text}\n\n"
+        subtitle = f"{i+1}\n{start_time} --> {end_time}\n{text}\n"
         f.write(subtitle)
