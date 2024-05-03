@@ -1,14 +1,18 @@
 import re
 import en_ch_matcher
 from nltk.tokenize import word_tokenize
-import json
 import os
 import difflib
+from collections import Counter
 
-en_file = '1_en.txt'
-cn_file = '1_cn.txt'
-# GET_EMBEDDINGS_FROM_FILE = False
-GET_EMBEDDINGS_FROM_FILE = True
+en_file = 'input_data/en_book.txt'
+cn_file = 'input_data/cn_book.txt'
+output_file = 'output/output.srt'
+vtt_file = 'input_data/sub.vtt'
+html_file = 'output/diff.html'
+
+GET_EMBEDDINGS_FROM_FILE = False
+# GET_EMBEDDINGS_FROM_FILE = True
 
 
 def read_vtt(filename):
@@ -33,7 +37,7 @@ def read_vtt(filename):
                 + '</c>' + first_word_match.group(2) + '<' + time_match.group(2) + '>')
             
         
-    with open('out.vtt', 'w', encoding='utf-8') as file:
+    with open('data/out.vtt', 'w', encoding='utf-8') as file:
         for line in words_lines:
             file.write(line)
             file.write('\n')
@@ -56,45 +60,79 @@ def read_vtt(filename):
 
 
 
-def book_timing(book_file, patch_file):
-    with open(patch_file, 'r', encoding='utf-8') as file:
-        patch_words = file.readlines()
-    
+def book_timing(book_file, subtitle_words):
     with open(book_file, 'r', encoding='utf-8') as file:
-        book_words = file.readlines()
+        book_sentences = en_ch_matcher.en_split_text(file.read())
+        book_words = []
+        for sentence in book_sentences:
+            for word in word_tokenize(sentence):
+                book_words.append(word.lower())
         book = []
         for word in book_words:
             book.append({'text' : word.rstrip('\n'), 'start' : None, 'end' : None})
 
-    tmp = 0
-    for patch in patch_words:
-        time_match = re.match(r' *(\d+) +(\d+) (.*)', patch)
-        if time_match:
-            tmp += 1
-            subtitle_idx = int(time_match.group(1)) - 1
-            book_idx = int(time_match.group(2)) - 1
+    diff = difflib.ndiff(subtitle_words, book_words)
+    file = difflib.HtmlDiff().make_file(subtitle_words, book_words)
+    with open(html_file, "w", encoding='utf-8') as f:
+        f.write(file)
+
+    matcher = difflib.SequenceMatcher(None, subtitle_words, book_words)
+    for idx, (tag, i1, i2, j1, j2) in enumerate(matcher.get_opcodes()):
+        # print(f"{tag}: {i1+1} to {i2} -> {j1+1} to {j2}")
+        if tag == 'equal':
+            for i in range(i1, i2):
+                j = i - i1 + j1
+                book[j]['start'] = subtitle[i]['start']
+                book[j]['end'] = subtitle[i]['end']
+
+        if tag == 'replace':
+            book[j1]['start'] = subtitle[i1]['start']
+            book[j1]['end'] = subtitle[i1]['end']
+
+        # elif tag == 'insert':
+        #     try:
+        #         next_matcher = matcher.get_opcodes()[idx + 1]
+        #         if next_matcher[0] == ['delete']:
+        #             book[i2]['start'] = subtitle[next_matcher[1]]['start']
+        #             book[i2]['end'] = subtitle[next_matcher[1]]['end']
+        #     except:
+        #         pass
+        # elif tag in ['replace', 'delete', 'insert']:
+        #     print(f"{tag}: {i1+1} to {i2} -> {j1+1} to {j2}")       
+
+    for idx, book_line in enumerate(book):
+        if book_line['start'] == None:
             try:
-                book[book_idx]['start'] = subtitle[subtitle_idx]['start']
-                book[book_idx]['end'] = subtitle[subtitle_idx]['end']
+                tmp = idx + 1
+                while book[tmp]['start'] == None:
+                    tmp += 1
+                book[idx]['start'] = book[tmp]['start']
+
+                tmp = idx - 1
+                while book[tmp]['end'] == None:
+                    tmp -= 1          
+                book[idx]['end'] = book[tmp]['end']
             except:
                 pass
 
-    with open('timing_book.txt', 'w', encoding='utf-8') as file:
+    with open('data/book_timing.txt', 'w', encoding='utf-8') as file:
         for line in book:
             file.write(str(line) + '\n')
     return book
             
-    
 
 
 
-subtitle = read_vtt('sub.vtt')
 
-with open('subtitle.txt', 'w', encoding='utf-8') as file:
+subtitle = read_vtt(vtt_file)
+subtitle_words = []
+
+with open('data/subtitle.txt', 'w', encoding='utf-8') as file:
     for word in subtitle:
         file.write(word["text"] + '\n')
+        subtitle_words.append(word["text"])
 
-timing_book = book_timing('book.txt', 'report.txt')
+timing_book = book_timing(en_file, subtitle_words)
 
 with open(en_file, 'r', encoding='utf-8') as file:
     english_text = file.read()
@@ -103,15 +141,15 @@ with open(cn_file, 'r', encoding='utf-8') as file:
     chinese_text = file.read()
 
 if GET_EMBEDDINGS_FROM_FILE:
-    if not os.path.exists('matches.txt'):
-        matches = en_ch_matcher.match_sentences(english_text, chinese_text, timing_book)
+    if not os.path.exists('data/matches.txt'):
+        matches = en_ch_matcher.match_sentences(english_text, chinese_text)
         #保存文件
-        with open('matches.txt', 'w', encoding='utf-8') as file:
+        with open('data/matches.txt', 'w', encoding='utf-8') as file:
             for en_index, cn_index, en_sentence, cn_sentence, similarity in matches:
                 file.write(f"{en_index} {cn_index}\n{en_sentence}\n{cn_sentence}\n{similarity}\n\n")
 
     #读取文件
-    with open('matches.txt', 'r', encoding='utf-8') as file:
+    with open('data/matches.txt', 'r', encoding='utf-8') as file:
         lines = file.readlines()
         matches = []
 
@@ -121,56 +159,91 @@ if GET_EMBEDDINGS_FROM_FILE:
             matches.append((en_idx, cn_idx, lines[idx*5+1], lines[idx*5+2], float(lines[idx*5+3])))
             
 else:
-    matches = en_ch_matcher.match_sentences(english_text, chinese_text, timing_book)
+    matches = en_ch_matcher.match_sentences(english_text, chinese_text)
+    with open('data/matches.txt', 'w', encoding='utf-8') as file:
+        for en_index, cn_index, en_sentence, cn_sentence, similarity in matches:
+            file.write(f"{en_index} {cn_index}\n{en_sentence}\n{cn_sentence}\n{similarity}\n\n")
+
+
+
+
+
+def char_tokenize(text_list):
+    char_list = []
+    for line in text_list:
+        for char in line:
+            char_list.append(char)
+    return char_list
+
+
+
+
+def get_dics(text_list):
+    dics = {}
+    for line in text_list:
+        for char in line:
+            dics.setdefault(char, 0)
+            dics[char] += 1
+
+    print(dics)
+    return dics
+
+
+
+
+
+def calculate_similarity(counter1, counter2):
+    """计算两个Counter对象的加权Jaccard相似度"""
+    intersection_sum = sum((counter1 & counter2).values())  # 交集元素的频次和
+    union_sum = sum((counter1 | counter2).values())  # 并集元素的频次和
+    return intersection_sum / union_sum if union_sum else 0
 
 
 
 
 
 def get_timing():
-    timing_words = [item['text'] for item in timing_book]
-    book_sentences = [en_sentence.lower() for _, _, en_sentence, _, _ in matches]
-    book_words = []
-
-    for sentence in book_sentences:
-        for word in word_tokenize(sentence):
-            book_words.append(word)
-
     book_sentences_timing = []
-    diff_result = difflib.ndiff(book_words, timing_words)
-    with open('diff.txt', 'w', encoding='utf-8') as file:
-        for line in diff_result:
-            file.write(line + '\n')
 
+    for match in matches:
+        _, _, en_sentence, cn_sentence, _ = match
+        en_words = [word.lower() for word in word_tokenize(en_sentence)]
+        en_chars = char_tokenize(en_words)
+        # en_count = Counter(en_sentence.lower())
 
-    timing_words_idx = 0
-    for _, _, en_sentence, cn_sentence, _ in matches:
-        sentence = ''
-        start = None
-        end = None
+        current_timing_chars = []
+        current_similarity = 0
 
-        while len(sentence) < len(en_sentence):
-            try:
-                if timing_book[timing_words_idx]['text'] in [',', '.', '!', '?', '?!', '!?', '...', '…', '……', '.', '?"', '."', '"', '!"', '?!"', '!?"', '…"', ';', ':']:
-                    sentence += timing_book[timing_words_idx]['text']
-                    print(sentence)
-                else:
-                    sentence += ' ' + timing_book[timing_words_idx]['text']
+        # 初始化相似度为第一个单词的相似度
+        if len(timing_book):
+            for char in timing_book[0]['text']:
+                current_timing_chars.append(char)
 
-                if start == None and timing_book[timing_words_idx]['start'] != None:
-                    start = timing_book[timing_words_idx]['start']
+            current_similarity = calculate_similarity(Counter(current_timing_chars), Counter(en_chars))
+            start = timing_book[0]['start']
+            end = timing_book[0]['end']
+            timing_book.pop(0)
+        
+        else:
+            break
 
-                if timing_book[timing_words_idx]['end'] != None:
-                    end = timing_book[timing_words_idx]['end']
+        # 尝试添加更多单词直到相似度不再增加
+        for i in range(1, len(timing_book)):
+            prev_similarity = current_similarity
+            for char in timing_book[0]['text']:
+                current_timing_chars.append(char)
 
-                timing_words_idx += 1
-
-            except:
-                print('Error')
+            current_similarity = calculate_similarity(Counter(current_timing_chars), Counter(en_chars))
+            if current_similarity <= prev_similarity:  # 相似度没有增加，撤销最后一个添加的单词
                 break
 
-        book_sentences_timing.append({'text' : cn_sentence, 'start' : start, 'end' : end})
+            else:
+                end = timing_book[0]['end']
+                timing_book.pop(0)
 
+        # 构建句子和时间戳
+
+        book_sentences_timing.append({'text': cn_sentence, 'start': start, 'end': end})
 
     return book_sentences_timing
 
@@ -178,7 +251,7 @@ def get_timing():
 
             
 
-with open('output.srt', 'w') as f:
+with open(output_file, 'w', encoding='utf-8') as f:
     matches_list = get_timing()
 
     for i, match in enumerate(matches_list):
@@ -186,5 +259,5 @@ with open('output.srt', 'w') as f:
         start_time = match['start']
         end_time = match['end']
 
-        subtitle = f"{i+1}\n{start_time} --> {end_time}\n{text}\n"
+        subtitle = f"{i+1}\n{start_time} --> {end_time}\n{text}\n\n"
         f.write(subtitle)
