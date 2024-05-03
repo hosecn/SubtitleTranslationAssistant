@@ -29,7 +29,7 @@ GET_EMBEDDINGS_FROM_FILE = args.get_embeddings_from_file
 if not os.path.isdir('./data'):
     os.mkdir('./data')
 
-if not os.exist('./output'):
+if not os.path.isdir('./output'):
     os.mkdir('./output')
 
 
