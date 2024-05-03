@@ -34,7 +34,7 @@ jobs:
 
     - name: Run Python Script with Env Variables
       run: |
-        python your_script.py \
+        python run.py \
           --en-file ${{ env.EN_FILE }} \
           --cn-file ${{ env.CN_FILE }} \
           --output-file ${{ env.OUTPUT_FILE }} \
