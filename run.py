@@ -26,10 +26,10 @@ html_file = args.html_file
 GET_EMBEDDINGS_FROM_FILE = args.get_embeddings_from_file
 
 
-if not os.path.isdir('./data')
-	os.mkdir('./data')
+if not os.path.isdir('./data'):
+    os.mkdir('./data')
 
-if not os.exist('./output')
+if not os.exist('./output'):
     os.mkdir('./output')
 
 
