@@ -37,10 +37,9 @@ def process_folder(folder):
             
             with open(file_path, "r", encoding="utf-8") as f:
                 html_file = f.read()
-            new = re.sub(r".*https://oceanofpdf.com.*</p></div>", "</p></div>", html_file)
 
             with open(file_path, "w", encoding="utf-8") as f:
-                f.write(new)
+                f.write(html_file)
 
 
 
@@ -78,7 +77,10 @@ def epub_to_txt(epub_file_path, txt_file_path):
             if item.get_type() == ebooklib.ITEM_DOCUMENT:
                 # 使用BeautifulSoup解析HTML内容
                 soup = BeautifulSoup(item.content, 'html.parser')
-                txt_file.write(soup.get_text() + '\n\n')
+                text = soup.get_text()
+                text = re.sub(r"https://oceanofpdf.com", "", text)
+                text = re.sub(r"OceanofPDF.com", "", text)                
+                txt_file.write(text + '\n\n')
                 
     print(f"EPUB文件 '{epub_file_path}' 已成功转换为TXT文件：'{txt_file_path}'")
 
