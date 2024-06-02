@@ -9,15 +9,12 @@ import pickle
 from sklearn.metrics.pairwise import cosine_similarity
 import text_api_processor
 
-import concurrent.futures
-import threading
-
 first_match_min_value = 0.6
 third_match_min_value = 0 
 forth_match_min_value = 0
-# GET_EMBEDDINGS_FROM_FILE = False
-GET_EMBEDDINGS_FROM_FILE = True
-max_lenth = 33
+GET_EMBEDDINGS_FROM_FILE = False
+# GET_EMBEDDINGS_FROM_FILE = True
+max_lenth = 38
 
 en_file = 'input_data/en_book.txt'
 cn_file = 'input_data/cn_book.txt'
@@ -25,8 +22,6 @@ cn_file = 'input_data/cn_book.txt'
 start_time = time.perf_counter()
 
 model_name = 'distiluse-base-multilingual-cased-v2'
-# model_name = 'intfloat/multilingual-e5-small'
-# model_name = 'mixedbread-ai/mxbai-embed-large-v1'
 
 
 # 初始化模型和分词器
@@ -252,19 +247,6 @@ def merge_unmatched_sentences(matches, en_sentences, cn_sentences):
             merged_matches.append((en_new_idx_list, cn_new_idx_list, unmatched_en_sentence, unmatched_cn_sentence, 0))
             merged_matches.append((en_index_list, cn_index_list, en_sentence, cn_sentence, similarity))
 
-            # en_short = split_to_short(unmatched_en_sentence)
-            # cn_short = split_to_short(unmatched_cn_sentence)
-            # output_text = f'english_text = [0:"{en_short[0]}"'
-            # for i in range(1, len(en_short)):
-            #     output_text = f'{output_text},{str(i)}:"{en_short[i]}"'
-            
-            # output_text = f'{output_text}], chinese_text = ["{cn_short[0]}"'
-            # for i in range(1, len(cn_short)):
-            #     output_text = f'{output_text},{str(i)}:"{cn_short[i]}"'
-            # output_text = f'{output_text}]'
-                
-            # print(output_text)
-
         else:
             last_en_sentence = en_sentences[last_en_index-1]
             last_cn_sentence = cn_sentences[last_cn_index-1]
@@ -317,44 +299,7 @@ def match_embeddings(similaritys_slice, cn_index, min_value=0.5):
 
 
 
-# 初始化计数器、锁和时间戳
-call_count = 0
-lock = threading.Lock()
-last_reset_time = time.time()
 
-def safe_process_text(input_text):
-    global call_count, last_reset_time
-    
-    with lock:  # 获取锁以安全地访问和修改共享资源
-        current_time = time.time()
-        
-        # 检查是否需要重置计数器
-        if current_time - last_reset_time >= 60:
-            call_count = 0
-            last_reset_time = current_time
-        
-        # 检查是否达到调用上限
-        while call_count >= 100:
-            remaining_time = 60 - (current_time - last_reset_time)
-            if remaining_time > 0:
-                print(f"达到调用上限，等待 {remaining_time:.2f} 秒...")
-                time.sleep(remaining_time)  # 等待直到下一分钟或剩余时间
-                current_time = time.time()  # 更新当前时间
-            else:  # 防止浮点运算误差导致的负数
-                time.sleep(1)
-            
-            # 再次检查是否已经重置了计数器
-            if current_time - last_reset_time >= 60:
-                call_count = 0
-                last_reset_time = current_time
-                
-        call_count += 1  # 增加调用计数
-
-    # 实际的处理文本逻辑
-    completion = text_api_processor.process_text(input_text)
-    completion = re.sub(r"\\\\", r'\\', completion)
-
-    return completion
 
 
 
@@ -363,62 +308,41 @@ def safe_process_text(input_text):
 def third_match(matches, similaritys, max_lenth):
     new_matches = []
     requiste_texts = []
-    results = []
 
     for en_index, cn_index, en_sentence, cn_sentence, similarity in matches:
         if len(cn_sentence) <= max_lenth:
-            # new_matches.append((en_index, cn_index, en_sentence, cn_sentence, similarity))
             continue
         
         else:
             requiste_texts.append(f"english: ```{en_sentence}```, chinese: ```{cn_sentence}```")
     
-    results = [None] * len(requiste_texts)  # 创建一个结果列表，用于存储处理后的文本
-
-    with concurrent.futures.ThreadPoolExecutor() as executor:
-        futures = {
-            executor.submit(safe_process_text, text): idx for idx, text in tqdm(enumerate(requiste_texts), desc="正在进行三次匹配")
-        }
-        
-        for future in concurrent.futures.as_completed(futures):
-            index = futures[future]  # 获取future的原始索引
-            output_text = future.result()
-            output_text = output_text.lstrip('```json').strip('```')
-            output_text = re.sub(r'"english":[^\",\s][^"](.*),?\n', r'"english":"$1"\n', output_text)
-            output_text = re.sub(r'"chinese":[^\",\s][^"](.*),?\n', r'"chinese":"$1"\n', output_text)
-            output_text = re.sub(r"'english': ?'(.*)', ", r'"english": "$1"', output_text)
-            output_text = re.sub(r"'chinese': ?'(.*)'(,? ?)", r'"chinese": "$1"$2', output_text)
-            
-            try:
-                results[index] = json.loads(rf"{output_text}")# 将结果存储在正确的位置
-            except:
-                print(f"处理文本时出错:{output_text}")
-                results[index] = {"english":"", "chinese":""}
-                
-
+    results = text_api_processor.process_text_thread(requiste_texts, 1)
     results_idx = 0
+
     for en_index, cn_index, en_sentence, cn_sentence, similarity in matches:
         if len(cn_sentence) <= max_lenth:
             new_matches.append((en_index, cn_index, en_sentence, cn_sentence, similarity))
         else:
-            
                 result = results[results_idx]
-                # print(result)
                 results_idx += 1
                 num = 0
                 try:
                     for item in result:
-                        new_matches.append((en_index, cn_index, result[item]["english"], result[item]["chinese"], 1))
+                        new_matches.append((en_index, cn_index, item[0], item[1], 1))
                         num += 1
                 except:
-                    print(f"处理文本时出错")
+                    print(f"处理文本时出错{result}")
                     while num > 0:
                         new_matches.pop()
+                        num -= 1
                         results_idx -= 1
 
                     new_matches.append((en_index, cn_index, en_sentence, cn_sentence, 1))
 
     return new_matches
+
+
+
 
 
 def forth_match(matches, max_lenth):
@@ -434,74 +358,29 @@ def forth_match(matches, max_lenth):
         else:
             requiste_texts.append(f"请分割成以逗号分割的短句，每句中文不超过{str(max_lenth)}个字。请保留每个短句后面的标点，如逗号。english: ```{en_sentence}```, chinese: ```{cn_sentence}```")
     
-    results = [None] * len(requiste_texts)  # 创建一个结果列表，用于存储处理后的文本
-
-    with concurrent.futures.ThreadPoolExecutor() as executor:
-        futures = {
-            executor.submit(safe_process_text, text): idx for idx, text in tqdm(enumerate(requiste_texts), desc="正在进行三次匹配")
-        }
-        
-        for future in concurrent.futures.as_completed(futures):
-            index = futures[future]  # 获取future的原始索引
-            output_text = future.result()
-            output_text = output_text.lstrip('```json').strip('```')
-            output_text = re.sub(r'"english":[^\",\s][^"](.*),?\n', r'"english":"$1"\n', output_text)
-            output_text = re.sub(r'"chinese":[^\",\s][^"](.*),?\n', r'"chinese":"$1"\n', output_text)
-            output_text = re.sub(r"'english': ?'(.*)', ", r'"english": "$1"', output_text)
-            output_text = re.sub(r"'chinese': ?'(.*)'(,? ?)", r'"chinese": "$1"$2', output_text)
-            output_text = re.sub(r"'chinese': ?'(.*)'(,? ?)", r'"chinese": "$1"$2', output_text)
-            
-            try:
-                results[index] = json.loads(rf"{output_text}")# 将结果存储在正确的位置
-            except:
-                print(f"处理文本时出错")
-                results[index] = {"english":"", "chinese":""}
-                
-
+    results = text_api_processor.process_text_thread(requiste_texts, 1)
     results_idx = 0
+
     for en_index, cn_index, en_sentence, cn_sentence, similarity in matches:
         if len(cn_sentence) <= max_lenth:
             new_matches.append((en_index, cn_index, en_sentence, cn_sentence, similarity))
         else:
-            
                 result = results[results_idx]
-                # print(result)
                 results_idx += 1
                 num = 0
                 try:
                     for item in result:
-                        new_matches.append((en_index, cn_index, result[item]["english"], result[item]["chinese"], 1))
+                        new_matches.append((en_index, cn_index, item[0], item[1], 1))
                         num += 1
                 except:
-                    print(f"处理文本时出错")
+                    print(f"处理文本时出错{result}")
                     while num > 0:
                         new_matches.pop()
                         results_idx -= 1
 
-                    new_matches.append((en_index, cn_index, en_sentence, cn_sentence, 0.8))
+                    new_matches.append((en_index, cn_index, en_sentence, cn_sentence, 1))
 
     return new_matches
-    # new_matches = []
-    # for en_index, cn_index, en_sentence, cn_sentence, similarity in tqdm(matches, desc="正在进行四次匹配"):
-    #     if len(cn_sentence) <= max_lenth:
-    #         new_matches.append((en_index, cn_index, en_sentence, cn_sentence, similarity))
-    #         continue
-
-    #     if len(cn_sentence) > max_lenth:
-    #         cn_sentences_list = split_to_short(cn_sentence, max_lenth)
-    #         en_sentences_list = split_to_short(en_sentence, max_lenth)
-        
-    #     en_embeddings = [get_sentence_embeddings([sentence])[0] for sentence in en_sentences_list]
-    #     cn_embeddings = [get_sentence_embeddings([sentence])[0] for sentence in cn_sentences_list]
-        
-    #     matched_indices = match_embeddings(en_embeddings, cn_embeddings, en_sentences_list, cn_sentences_list, third_match_min_value)
-        
-    #     for en_start, en_end, cn_start, cn_end, similarity in matched_indices:
-    #         en_sentence = ' '.join(en_sentences_list[en_start:en_end+1])
-    #         cn_sentence = ''.join(cn_sentences_list[cn_start:cn_end+1])
-    #         new_matches.append((en_index, cn_index, en_sentence, cn_sentence, similarity))
-
-    # return new_matches
     
 
 
