@@ -5,13 +5,15 @@ import os
 import difflib
 import text_api_processor
 
-file_index = "01"
+with open("data.txt", "r+") as file:
+    content = file.readlines()  # 读取所有行
+    file_index = content[0]
 
 en_file = f'batching/input_data/{file_index}_en.txt'
 cn_file = f'batching/input_data/{file_index}_cn.txt'
-output_file = f'batching/output/{file_index}_output.srt'
-output_file2 = f'batching/output/{file_index}_output2.srt'
-output_file3 = f'batching/output/{file_index}_output3.srt'
+output_file = f'batching/output/{file_index}_main.srt'
+output_file2 = f'batching/output/{file_index}_en.srt'
+output_file3 = f'batching/output/{file_index}_cn.srt'
 vtt_file = f'batching/input_data/{file_index}.vtt'
 html_file = f'batching/output/{file_index}_diff.html'
 
@@ -76,7 +78,7 @@ def read_vtt(filename):
 
 def book_timing(book_file, subtitle_words):
     with open(book_file, 'r', encoding='utf-8') as file:
-        book_sentences = en_ch_matcher.en_split_text(file.read())
+        book_sentences = en_ch_matcher.split_en_text(file.read())
         book_words = []
         for sentence in book_sentences:
             for word in word_tokenize(sentence):

@@ -7,9 +7,10 @@ from sentence_transformers import SentenceTransformer
 from tqdm import tqdm
 import pickle
 from sklearn.metrics.pairwise import cosine_similarity
+from dashscope import BatchTextEmbedding
 import text_api_processor
 
-first_match_min_value = 0.6
+first_match_min_value = 0.55
 third_match_min_value = 0 
 forth_match_min_value = 0
 GET_EMBEDDINGS_FROM_FILE = False
@@ -50,7 +51,7 @@ else:
 
 
 
-def en_split_text(para):
+def split_en_text(para):
     para = re.sub('(\.{6})([^”’\'\"]) ?', r"\1\n\2", para)  # 英文省略号
     para = re.sub('(\…{2})([^”’\'\"]) ?', r"\1\n\2", para)  # 中文省略号
     para = re.sub('(?<!\b(?:Mr|Dr|Ms)\.)\.(?=\s+[A-Z]|$)', '.\n', para)
@@ -65,7 +66,7 @@ def en_split_text(para):
 
 
 
-def cn_split_text(para):
+def split_cn_text(para):
     para = re.sub('(\.{6})([^”’\'\"]) ?', r"\1\n\2", para)  # 英文省略号
     para = re.sub('(\…{2})([^”’\'\"]) ?', r"\1\n\2", para)  # 中文省略号
     para = re.sub('([。;；！？\?\!]+ ?[”’]? ?)([^，。！？\?\!”’\'\"])', r'\1\n\2', para)
@@ -111,6 +112,10 @@ def get_sentence_embeddings(sentences):
     计算句子的嵌入向量
     """
     return model.encode(sentences)
+    # result = BatchTextEmbedding.call(BatchTextEmbedding.Models.text_embedding_async_v2,
+    #                                  url=sentences,
+    #                                  text_type="document")
+    return result.message
 
 
 
@@ -376,12 +381,13 @@ def forth_match(matches, max_lenth):
                     print(f"处理文本时出错{result}")
                     while num > 0:
                         new_matches.pop()
-                        results_idx -= 1
+                        num -= 1
+                    # results_idx -= 1
 
                     new_matches.append((en_index, cn_index, en_sentence, cn_sentence, 1))
 
     return new_matches
-    
+
 
 
 
@@ -390,8 +396,8 @@ def match_sentences(english_text, chinese_text, max_lenth = max_lenth):
     """
     匹配中英文句子
     """
-    en_sentences = en_split_text(english_text)
-    cn_sentences = cn_split_text(chinese_text)
+    en_sentences = split_en_text(english_text)
+    cn_sentences = split_cn_text(chinese_text)
     print(f'英文句数：{len(en_sentences)} 中文句数：{len(cn_sentences)}')
 
     similaritys = get_similaritys(en_sentences, cn_sentences)
@@ -420,11 +426,11 @@ if __name__ == '__main__':
         chinese_text = file.read()
 
     with open('data/cn_sentences.txt', 'w', encoding='utf-8') as file:
-        for line in cn_split_text(chinese_text):
+        for line in split_cn_text(chinese_text):
             file.write(line + '\n')
 
     with open('data/en_sentences.txt', 'w', encoding='utf-8') as file:
-        for line in en_split_text(english_text):
+        for line in split_en_text(english_text):
             file.write(line + '\n')
 
     matches = match_sentences(english_text, chinese_text) # 匹配句子

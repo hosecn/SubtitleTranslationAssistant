@@ -7,7 +7,6 @@ import re
 
 max_lenth = 38
 
-
 dashscope_api_key = os.getenv("DASHSCOPE_API_KEY")
 client = openai.OpenAI(
     api_key=dashscope_api_key,  # 替换成真实DashScope的API_KEY
@@ -47,12 +46,21 @@ def safe_process_text(input_text, prompt):
                 
         call_count += 1  # 增加调用计数
 
-    # 实际的处理文本逻辑
-    completion = process_text(input_text, prompt)
-    completion = re.sub(r"\\\\", r'\\', completion)
+    while True:
+        try:
+            completion = process_text(input_text, prompt)
+            completion = re.sub(r"\\\\", r'\\', completion)
+            return completion
+        except openai.RateLimitError:
+            print("Rate limit exceeded. Waiting and retrying...")
+            time.sleep(5)  # 等待5秒后重试
 
-    return completion
-
+        except openai.BadRequestError as e:
+            print(f"不适当内容：{input_text}")
+            return None
+        
+        except:
+            return None
 
 prompt1 = f'''
 作为高级语义处理任务，你的任务是理解并处理一段中英文文本，遵循以下具体步骤：
@@ -94,11 +102,9 @@ def process_text(input_text, prompt):
     res = ""
     for chunk in completion:
         if chunk.choices[0].delta.content is not None:
-            # print(chunk.choices[0].model_dump()["delta"]["content"], end="")
             res += chunk.choices[0].delta.content
             
     return res
-
 
 def process_text_thread(requiste_texts, prompt_index):
     results = [None] * len(requiste_texts)  # 创建一个结果列表，用于存储处理后的文本
@@ -109,21 +115,25 @@ def process_text_thread(requiste_texts, prompt_index):
             for future in concurrent.futures.as_completed(futures):
                 index = futures[future]  # 获取future的原始索引
                 output_text = future.result()
-                output_text = re.sub(r'\[|\]', '', output_text)
-                matches = output_text.split('\n')
-                matches = [match.split('|') for match in matches]
+                if future == None:
+                    print(f"处理文本时出错:{output_text}")
+                    results[index] = {"english": "", "chinese": ""}    
+                    continue
 
                 try:
-                    results[index] = matches# 将结果存储在正确的位置
+                    output_text = re.sub(r'\[|\]', '', output_text)
+                    matches = output_text.split('\n')
+                    matches = [match.split('|') for match in matches]
+                    results[index] = matches  # 将结果存储在正确的位置
                 except:
-                    print(f"处理1文本时出错:{output_text}")
-                    results[index] = {"english":"", "chinese":""}
+                    print(f"处理文本时出错:{output_text}")
+                    results[index] = {"english": "", "chinese": ""}
         
         else:
             futures = {executor.submit(safe_process_text, text['text'], prompt2): idx for idx, text in enumerate(requiste_texts)}
             for future in concurrent.futures.as_completed(futures):
                 index = futures[future]  # 获取future的原始索引
                 output_text = future.result()
-                results[index] = {"text":output_text, "start":requiste_texts[index]['start'], "end":requiste_texts[index]['end']}
+                results[index] = {"text": output_text, "start": requiste_texts[index]['start'], "end": requiste_texts[index]['end']}
 
         return results

@@ -7,7 +7,7 @@ from bs4 import BeautifulSoup
 import shutil
 
 
-epub_input_folder = 'input_data'
+epub_input_folder = 'input_data/'
 ebook_folder = 'output/ebook_folder'
 epub_output_folder = 'output/epub'
 txt_output_folder = 'output/txt'
@@ -32,7 +32,7 @@ def process_folder(folder):
     for root, dirs, files in os.walk(folder):
         for file in files:
             file_path = os.path.join(root, file)
-            if not file.endswith(".xhtml"):
+            if not file.endswith(".xhtml") or not file.endwith(".html"):
                 continue
             
             with open(file_path, "r", encoding="utf-8") as f:
@@ -79,7 +79,7 @@ def epub_to_txt(epub_file_path, txt_file_path):
                 soup = BeautifulSoup(item.content, 'html.parser')
                 text = soup.get_text()
                 text = re.sub(r"https://oceanofpdf.com", "", text)
-                text = re.sub(r"OceanofPDF.com", "", text)                
+                text = re.sub(r"OceanofPDF.com", "", text)
                 txt_file.write(text + '\n\n')
                 
     print(f"EPUB文件 '{epub_file_path}' 已成功转换为TXT文件：'{txt_file_path}'")
@@ -98,9 +98,9 @@ for root, dirs, files in os.walk(epub_input_folder):
 
         file_name = file.rstrip('.epub')
 
-        unzip_epub(file_path, ebook_folder)
-        process_folder(ebook_folder)
-        epub_output_file_path = os.path.join(epub_output_folder, file)
-        compress_folder_to_epub(ebook_folder, epub_output_file_path)
+        # unzip_epub(file_path, ebook_folder)
+        # process_folder(ebook_folder)
+        # epub_output_file_path = os.path.join(epub_output_folder, file)
+        # compress_folder_to_epub(ebook_folder, epub_output_file_path)
         txt_output_path = os.path.join(txt_output_folder, file_name + '.txt')
-        epub_to_txt(epub_output_file_path, txt_output_path)
+        epub_to_txt(file_path, txt_output_path)

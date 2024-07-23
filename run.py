@@ -26,13 +26,6 @@ html_file = args.html_file
 GET_EMBEDDINGS_FROM_FILE = args.get_embeddings_from_file
 
 
-if not os.path.isdir('./data'):
-    os.mkdir('./data')
-
-if not os.path.isdir('./output'):
-    os.mkdir('./output')
-
-
 def read_vtt(filename):
 
     # 打开并读取VTT文件
@@ -54,11 +47,6 @@ def read_vtt(filename):
             words_lines.append('<' + time_match.group(1) + '><c> ' + first_word_match.group(1) \
                 + '</c>' + first_word_match.group(2) + '<' + time_match.group(2) + '>')
             
-        
-    with open('data/out.vtt', 'w', encoding='utf-8') as file:
-        for line in words_lines:
-            file.write(line)
-            file.write('\n')
             
     # 存放解析后的字幕信息
     words = []
@@ -80,7 +68,7 @@ def read_vtt(filename):
 
 def book_timing(book_file, subtitle_words):
     with open(book_file, 'r', encoding='utf-8') as file:
-        book_sentences = en_ch_matcher.en_split_text(file.read())
+        book_sentences = en_ch_matcher.split_en_text(file.read())
         book_words = []
         for sentence in book_sentences:
             for word in word_tokenize(sentence):
